@@ -1,0 +1,16 @@
+[run]
+omit =
+    */asgi.py
+    */wsgi.py
+    */manage.py
+    */settings.py
+    */urls.py
+    */routing.py
+    */__init__.py
+    */tests/*
+    */views.py
+    */playableObject.py
+
+[report]
+exclude_also =
+    if TYPE_CHECKING:

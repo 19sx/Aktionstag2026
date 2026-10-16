@@ -1,1 +1,149 @@
-# Aktionstag2026
+# 🔥 DRV-BOX 🔥
+
+> **Drei Spieler. Ein brennender Server. Keine vollständigen Informationen.**  
+> Kommunikation, Teamwork und schnelle Entscheidungen entscheiden darüber, ob der Server gerettet werden kann.
+
+**DRV-BOX** ist ein webbasiertes kooperatives Multiplayer-Spiel, bei dem drei Spieler gemeinsam versuchen, einen kritischen Server vor dem endgültigen Ausfall zu bewahren.
+
+Das Besondere: **Keiner der Spieler besitzt alle Informationen.** Die benötigten Hinweise sind auf die drei Spieler verteilt. Nur durch Kommunikation und Zusammenarbeit können die richtigen Entscheidungen getroffen und der Server gerettet werden.
+
+---
+
+## Projektbeschreibung
+
+Drei Spieler bilden ein **Server-Rettungsteam**
+Der Server befindet sich in einem kritischen Zustand und droht vollständig auszufallen. Um ihn zu retten, müssen die Spieler verschiedene Aufgaben und Rätsel lösen.
+
+Doch es gibt ein Problem:
+
+> **Jeder Spieler verfügt nur über einen Teil der Informationen.**
+>Zusätzlich sieht jede Rolle etwas anderes:
+
+| Rolle | Sicht |
+|---|---|
+|**Host**| Zeigt den Spielstand auf dem Beamer, *spielt nicht mit* |
+|**Master** | Spielt mit und hat das Manual mit den Guides für Spieler 1 und 2. Die beiden beschreiben ihm, was sie sehen, und er sagt ihnen anhand des Manuals, was sie tun müssen |
+|**Spieler 1** | Vorderseite des Servers mit eigenen Aufgaben (keine Anleitung), beschreibt dem Master, was er sieht |
+|**Spieler 2** | Rückseite des Servers mit eigenen Aufgaben (keine Anleitung), beschreibt dem Master, was er sieht |
+
+Dadurch müssen die Spieler ständig miteinander kommunizieren, Informationen weitergeben und gemeinsam Entscheidungen treffen.
+
+### 🔥😱 Der Server brennt. Die Zeit läuft. 
+
+Nur wenn das Team schnell und effektiv zusammenarbeitet, kann der Server gerettet werden.
+
+---
+
+## Die drei Aufgaben
+
+1. **Alarm verifizieren:** Der Master findet die defekte Komponente und erfährt ihre Seriennummer. Spieler 1 betätigt den richtigen Hauptschalter, Spieler 2 tippt den Shutdown-Befehl mit der Seriennummer ein.
+2. **Richtiges Löschprotokoll:** Der Master kennt das richtige Ventil und die Farbe. Spieler 1 betätigt die richtige Kombination und erhält den letzten Passwort-Schnipsel. Spieler 2 setzt die Schnipsel zum Freigabe-Passwort zusammen und gibt es ein.
+3. **Datenrettung:** Der Master hat die ASCII-Tabelle und die binären Zahlen als Hilfsblatt. Spieler 1 löst ein ASCII-Rätsel, Spieler 2 ein Binär-Rätsel, jeder schaltet damit seinen Button frei. Beide drücken gleichzeitig und retten den Server.
+
+---
+
+## Planungsphase
+Zu Beginn des Projekts wurden verschiedene Projektideen gesammelt und gemeinsam im Team besprochen. Dabei wurde besonders darauf geachtet, welche Idee innerhalb der vorgegebenen drei Wochen realistisch umgesetzt werden kann und gleichzeitig genügend Möglichkeiten für die einzelnen Teammitglieder bietet.
+
+Nachdem die Entscheidung auf DRV-BOX gefallen war, wurde die grundlegende Struktur des Projekts geplant. Dafür wurde ein UML-Diagramm erstellt, um die wichtigsten Komponenten und deren Zusammenhänge darzustellen.
+
+Anschließend wurde ein Gantt-Diagramm erstellt, in dem die verfügbaren Arbeitszeiten und Aufgaben auf die drei Entwicklungswochen verteilt wurden. So konnten die Zuständigkeiten im Team festgelegt und wichtige Entwicklungsphasen sowie Meilensteine geplant werden.
+
+---
+
+### Zielgruppe
+
+DRV-BOX richtet sich an **Jugendliche und Erwachsene**, die Spaß an kooperativen Multiplayer-Spielen, Rätseln und Teamwork haben.
+
+Das Spiel ist besonders für Gruppen geeignet, die gemeinsam an einer Aufgabe arbeiten und dabei auf Kommunikation angewiesen sind. Durch die unterschiedlichen Einschränkungen der Spieler entsteht eine besondere Herausforderung, bei der **Zusammenarbeit, Kommunikation und schnelles Handeln** gefragt sind.
+
+
+### Zeitanspruch 
+
+Die Entwicklung ist in vier Hauptphasen unterteilt. Der Zeitaufwand bezieht sich auf die Netto-Arbeitszeit pro Entwickler-Rolle (Backend / Frontend), basierend auf ca. 8h pro Arbeitstag:
+
+| Phase | Aufwand pro Rolle (ca.) | Fokus | Kernaufgaben |
+| :--- | :--- | :--- | :--- |
+| **Phase 0: Planung & Analyse** | 8h-16h | Planung | Projektthema, Klassendiagramm, Gantt-Diagramm |
+| **Phase 1: Fundament** | 12h | Setup & TDD | JSON-Verträge, Docker/Redis Basis, Basis-Tests |
+| **Phase 2: Core-Loop** | 44h | MVP Entwicklung | Lobby, Vue UI, Async Tick-Schleife, WebSocket-Integration |
+| **Phase 3: Stabilität** | 28h | Polishing & QA | Task-Validierung, Redis-Locks, LAN-Generalprobe, MVP Meilenstein |
+| **Phase 4: Puffer/Extras**| 4h | Erweiterungen | PostgreSQL Highscores, Audio-API, Cypress E2E |
+
+>#### Geplant: 96 Stunden
+>#### Gesamt: TBD
+---
+
+## Tech-Stack
+
+- **Backend:** Python, Django, Django Channels, Daphne
+- **Frontend:** Vue.js 3, Tailwind CSS, Vite
+- **In-Memory Store & Channel Layer:** Redis
+- **Containerisierung:** Docker, Docker Compose
+- **Tests:** Pytest, Vitest, Postman (optional Cypress)
+
+## Repository-Struktur
+
+- `docker-compose.yml`: Definiert die Container für Backend, Frontend und Redis.
+- `backend/`: Django-Anwendung, WebSocket-Consumer und Tests.
+- `frontend/`: Vue-Single-Page-Application für Host- und Client-Ansichten.
+- `JSON_Vertrag.md`: Festgelegte Datenstrukturen für die WebSocket-Kommunikation.
+- `GameTask.md`: Beschreibung der drei Aufgaben.
+
+---
+
+## Wie kann man das Spiel ausführen?
+
+### Voraussetzungen
+
+- Docker muss installiert sein. Siehe Link : https://docs.docker.com/desktop/setup/install/windows-install/
+- Python 3.13.x 
+- Das Projekt muss über Git importiert bzw. geklont worden sein.
+
+### Anwendung starten
+
+Im Hauptverzeichnis des Projekts folgenden Befehl ausführen:
+
+```bash
+docker compose up --build -d
+```
+### Testing 
+
+### Backend
+Alle folgenden Befehle im Ordner `backend` ausführen.
+
+
+Für lokale Tests ein virtuelles Environment erstellen:
+```powershell
+python -m venv .venv
+
+.venv\Scripts\Activate.ps1
+
+pip install -r requirements.txt
+```
+
+Alle Tests runnen (für html output wird ein Ordner in \backend erstellt)
+```powershell
+python -m pytest
+```
+---
+
+### Happy Path
+
+Voraussetzung: `docker compose up --build -d` ist durchgelaufen (siehe oben).
+
+1. `http://localhost:8000/create-game/` aufrufen und die `game_id` kopieren.
+2. `http://localhost:5173/` als **Host-Bildschirm** öffnen.
+3. Auf den Spieler-Laptops `http://localhost:5173/` öffnen, die `game_id` und einen Namen eingeben. Die Rolle (Master, Spieler 1, Spieler 2) wird beim Beitritt zugewiesen.
+4. Die Spieler erscheinen in der Lobby. Weitere Beitritte über die maximale Spielerzahl hinaus werden abgelehnt.
+5. Spiel starten: `http://localhost:8000/force-start/?game_id=<game_id>`
+6. Die Health sinkt jede Sekunde um 1, die Spielzeit beträgt 300 Sekunden.
+7. Aufgaben lösen: richtig gibt +15 HP (max. 300) und eine neue Aufgabe, falsch kostet 60 HP.
+8. Bei 0 HP oder abgelaufener Zeit erscheint Game Over bei allen.
+
+| Was | Wert |
+|---|---|
+| Frontend | `http://localhost:5173/` |
+| `game_id` erzeugen | `http://localhost:8000/create-game/` |
+| Start (vorläufig) | `http://localhost:8000/force-start/?game_id=<game_id>` |
+| Stoppen | `docker compose down` |

@@ -1,0 +1,515 @@
+"""
+WebSocket-Consumer-Tests: Nachrichten im JSON-Vertrag (event + payload).
+Deckt alle Branches im GameConsumer ab (Ziel: 100% Zeilenabdeckung).
+"""
+import asyncio
+import json
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import fakeredis
+import pytest
+from channels.testing import WebsocketCommunicator
+
+from backend.GameConsumer import GameConsumer
+from backend.gameLoop import games, GameLoop
+from backend.playableObject import AlarmTask, ROLE_M, ROLE_P1, ROLE_P2
+from backend.redis_handler import ROLES
+
+
+# ---------------------------------------------------------------- Fixtures
+@pytest.fixture(autouse=True)
+def clean_games():
+    games.clear()
+    yield
+    games.clear()
+
+
+@pytest.fixture
+def env():
+    fake = fakeredis.FakeStrictRedis()
+    fake.flushall()
+    with patch("backend.redis_handler.redis.Redis", return_value=fake):
+        yield fake
+
+
+# ---------------------------------------------------------------- Helfer
+async def verbinden(game_id="test_game"):
+    comm = WebsocketCommunicator(GameConsumer.as_asgi(), f"/ws/game/{game_id}/")
+    comm.scope["url_route"] = {"kwargs": {"game_id": game_id}}
+    akzeptiert, _ = await comm.connect()
+    return comm, akzeptiert
+
+
+async def verbinden_ohne_initial(game_id):
+    comm, akzeptiert = await verbinden(game_id)
+    assert akzeptiert is True
+    await comm.receive_json_from()
+    return comm
+
+
+async def registrieren(comm, name):
+    await comm.send_json_to({"event": "player_register", "payload": {"player_name": name}})
+
+
+async def waehle_rolle(comm, role):
+    await comm.send_json_to({"event": "choose_role", "payload": {"role": role}})
+
+
+async def recv_until(comm, event, pred=lambda p: True, timeout=3):
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise asyncio.TimeoutError(f"{event} nicht empfangen")
+        msg = await comm.receive_json_from(timeout=remaining)
+        if msg["event"] == event and pred(msg["payload"]):
+            return msg
+
+
+async def spieler(game_id, *namen_rollen):
+    """Spieler registrieren und Rollen wählen. Rückgabe: Liste von comm."""
+    out = []
+    for name, role in namen_rollen:
+        comm = await verbinden_ohne_initial(game_id)
+        await registrieren(comm, name)
+        await waehle_rolle(comm, role)
+        await recv_until(comm, "role_assigned", lambda p: p["role"] == role)
+        out.append(comm)
+    return out
+
+
+async def beenden(*comms, game_ids=()):
+    for gid in game_ids:
+        if gid in games:
+            await games[gid].stop_game()
+    for c in comms:
+        await c.disconnect()
+
+
+def state_key(game_id):
+    return f"game:{game_id}:state"
+
+
+def set_button_task(env, game_id, task_id="task-btn"):
+    env.hset(state_key(game_id), "task", json.dumps({
+        "task_id": task_id,
+        "kind": "button",
+        "instruction": "Test",
+        "assigned_to_player": None,
+        "state": {"target": "reactor_vent", "value": "open"},
+    }))
+
+
+# ---------------------------------------------------------------- Connect / Ping
+@pytest.mark.asyncio
+async def test_connect_sends_lobby_update(env):
+    comm, ok = await verbinden("cov_connect")
+    assert ok is True
+    msg = await comm.receive_json_from()
+    assert msg["event"] == "lobby_update"
+    assert msg["payload"]["status"] == "waiting"
+    await comm.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_connect_while_running_sends_tick(env):
+    """Cover-Zeilen 24-27: späte Verbindung bei laufendem Spiel."""
+    a = (await spieler("cov_late", ("A", "MASTER"), ("B", "FI-SI"), ("C", "FI-AE")))[0]
+    try:
+        # Spiel starten
+        await a.send_json_to({"event": "start_game", "payload": {}})
+        await recv_until(a, "lobby_update", lambda p: p["status"] == "running")
+
+        late, ok = await verbinden("cov_late")
+        assert ok is True
+        lobby = await late.receive_json_from()
+        assert lobby["event"] == "lobby_update"
+        assert lobby["payload"]["status"] == "running"
+        tick = await recv_until(late, "game_tick")
+        assert {"health", "time_left", "tasks"} <= set(tick["payload"])
+        await late.disconnect()
+    finally:
+        await beenden(a, game_ids=["cov_late"])
+
+
+@pytest.mark.asyncio
+async def test_ping_pong(env):
+    comm = await verbinden_ohne_initial("cov_ping")
+    await comm.send_json_to({"event": "ping", "payload": {}})
+    assert (await comm.receive_json_from())["event"] == "pong"
+    await comm.disconnect()
+
+
+# ---------------------------------------------------------------- Fehlerhafte Payloads
+@pytest.mark.asyncio
+async def test_invalid_json(env):
+    comm = await verbinden_ohne_initial("cov_ij")
+    await comm.send_to(text_data="{kein json!")
+    assert (await comm.receive_json_from())["event"] == "error"
+    await comm.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_json_not_object(env):
+    comm = await verbinden_ohne_initial("cov_jno")
+    await comm.send_to(text_data="[1,2,3]")
+    assert (await comm.receive_json_from())["event"] == "error"
+    await comm.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_payload_not_object(env):
+    """Cover-Zeile 65: payload kein dict."""
+    comm = await verbinden_ohne_initial("cov_pno")
+    await comm.send_json_to({"event": "ping", "payload": "kein-objekt"})
+    msg = await comm.receive_json_from()
+    assert msg["event"] == "error"
+    assert "payload" in msg["payload"]["message"]
+    await comm.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_unknown_event(env):
+    """Cover-Zeile 67: else-Zweig."""
+    comm = await verbinden_ohne_initial("cov_unk")
+    await comm.send_json_to({"event": "gibtsnicht", "payload": {}})
+    assert (await comm.receive_json_from())["event"] == "error"
+    await comm.disconnect()
+
+
+# ---------------------------------------------------------------- host_register (Zeile 76-81)
+@pytest.mark.asyncio
+async def test_host_register(env):
+    comm = await verbinden_ohne_initial("cov_host")
+    await comm.send_json_to({"event": "host_register", "payload": {}})
+    msg = await comm.receive_json_from()
+    assert msg["event"] == "lobby_update"
+    assert msg["payload"]["players"] == []
+    await comm.disconnect()
+
+
+# ---------------------------------------------------------------- player_register
+@pytest.mark.asyncio
+async def test_register_without_name(env):
+    """Cover-Zeile 93-94: fehlender Name."""
+    comm = await verbinden_ohne_initial("cov_noname")
+    await comm.send_json_to({"event": "player_register", "payload": {}})
+    msg = await comm.receive_json_from()
+    assert msg["event"] == "error"
+    await comm.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_register_error_when_game_running(env):
+    """Cover-Zeile 94: register_player liefert error."""
+    (a,) = await spieler("cov_reg_err", ("A", "MASTER"))
+    env.hset(state_key("cov_reg_err"), "status", "running")
+
+    try:
+        comm = await verbinden_ohne_initial("cov_reg_err")
+        await registrieren(comm, "B")
+        msg = await recv_until(comm, "error")
+        assert "läuft" in msg["payload"]["message"]
+        await comm.disconnect()
+    finally:
+        await beenden(a)
+
+
+@pytest.mark.asyncio
+async def test_register_assigns_role_and_broadcasts(env):
+    """Cover-Zeile 101: role_assigned wird gesendet."""
+    comm = await verbinden_ohne_initial("cov_reg_ok")
+    await registrieren(comm, "A")
+    msg = await recv_until(comm, "role_assigned")
+    assert msg["payload"]["role"] is None
+    await comm.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_with_role_sends_role_assigned(env):
+    """Cover-Zeile 112-116: reconnect liefert direkt role_assigned."""
+    a = await verbinden_ohne_initial("cov_reconnect")
+    await registrieren(a, "A")
+    await waehle_rolle(a, "MASTER")
+    await recv_until(a, "role_assigned", lambda p: p["role"] == "MASTER")
+    await a.disconnect()
+
+    # Neue Verbindung, gleicher Name
+    b = await verbinden_ohne_initial("cov_reconnect")
+    await registrieren(b, "A")
+    msg = await recv_until(b, "role_assigned", lambda p: p["role"] == "MASTER")
+    assert msg["payload"]["role"] == "MASTER"
+    await b.disconnect()
+
+
+# ---------------------------------------------------------------- choose_role (124-129)
+@pytest.mark.asyncio
+async def test_choose_role_without_register(env):
+    """Cover-Zeile 124-125: player_name None."""
+    comm = await verbinden_ohne_initial("cov_cr_noreg")
+    await waehle_rolle(comm, "MASTER")
+    msg = await recv_until(comm, "error")
+    assert "registered" in msg["payload"]["message"]
+    await comm.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_choose_role_without_role_field(env):
+    """Cover-Zeile 128-129: role fehlt."""
+    comm = await verbinden_ohne_initial("cov_cr_norole")
+    await registrieren(comm, "A")
+    await comm.send_json_to({"event": "choose_role", "payload": {}})
+    msg = await recv_until(comm, "error")
+    assert "role" in msg["payload"]["message"]
+    await comm.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_choose_role_error_from_redis(env):
+    """choose_role liefert error (z. B. gleiche Rolle doppelt)."""
+    a = await verbinden_ohne_initial("cov_cr_dup")
+    b = await verbinden_ohne_initial("cov_cr_dup")
+    await registrieren(a, "A")
+    await registrieren(b, "B")
+    await waehle_rolle(a, "MASTER")
+    await recv_until(a, "role_assigned")
+    await waehle_rolle(b, "MASTER")
+    msg = await recv_until(b, "error")
+    assert "vergeben" in msg["payload"]["message"]
+    await a.disconnect()
+    await b.disconnect()
+
+
+# ---------------------------------------------------------------- owner_settings
+@pytest.mark.asyncio
+async def test_owner_settings_valid(env):
+    comm = await verbinden_ohne_initial("cov_os_ok")
+    await comm.send_json_to({"event": "owner_settings", "payload": {"time": 60}})
+    msg = await recv_until(comm, "lobby_update")
+    assert msg["payload"]["status"] in ("waiting", "ready")
+    await comm.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_owner_settings_invalid(env):
+    comm = await verbinden_ohne_initial("cov_os_bad")
+    await comm.send_json_to({"event": "owner_settings", "payload": {"time": "abc"}})
+    msg = await recv_until(comm, "error")
+    assert "Einstellungen" in msg["payload"]["message"]
+    await comm.disconnect()
+
+
+# ---------------------------------------------------------------- reset_game
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event", ["reset_game", "new_lobby"])
+async def test_reset_lobby_clears_players(env, event):
+    """Cover-Zeile 76-81: reset_game/new_lobby."""
+    (a,) = await spieler(f"cov_{event}", ("A", "MASTER"))
+    await a.send_json_to({"event": event, "payload": {}})
+    msg = await recv_until(a, "lobby_update", lambda p: p["players"] == [])
+    assert msg["payload"]["status"] == "waiting"
+    await a.disconnect()
+
+
+# ---------------------------------------------------------------- start_game
+@pytest.mark.asyncio
+async def test_start_game_incomplete_lobby(env):
+    """Cover-Zeile 209-216: nicht bereit."""
+    (a,) = await spieler("cov_start_inc", ("A", "MASTER"))
+    await a.send_json_to({"event": "start_game", "payload": {}})
+    msg = await recv_until(a, "error")
+    assert "3 Spieler" in msg["payload"]["message"]
+    await a.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_start_game_success_and_second_fails(env):
+    (a, b, c) = await spieler("cov_start_ok",
+                              ("A", "MASTER"), ("B", "FI-SI"), ("C", "FI-AE"))
+    try:
+        await a.send_json_to({"event": "start_game", "payload": {}})
+        await recv_until(a, "lobby_update", lambda p: p["status"] == "running")
+
+        await a.send_json_to({"event": "start_game", "payload": {}})
+        msg = await recv_until(a, "error")
+        assert "already_running" in msg["payload"]["message"]
+    finally:
+        await beenden(a, b, c, game_ids=["cov_start_ok"])
+
+
+# ---------------------------------------------------------------- player_input
+@pytest.mark.asyncio
+async def test_player_input_without_registration(env):
+    comm = await verbinden_ohne_initial("cov_pi_noreg")
+    await comm.send_json_to({"event": "player_input", "payload": {
+        "action_type": "button_press", "target": "x", "value": "y"
+    }})
+    msg = await recv_until(comm, "error")
+    assert "Rolle" in msg["payload"]["message"] or "registered" in msg["payload"]["message"]
+    await comm.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_player_input_before_start(env):
+    """input_result error bei game not running."""
+    (a,) = await spieler("cov_pi_before", ("A", "MASTER"))
+    await a.send_json_to({"event": "player_input", "payload": {
+        "action_type": "button_press", "target": "x", "value": "y"
+    }})
+    res = await recv_until(a, "input_result")
+    assert res["payload"]["result"] == "error"
+    await recv_until(a, "error")
+    await a.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_player_input_wrong(env):
+    (a, b, c) = await spieler("cov_pi_wrong",
+                              ("A", "MASTER"), ("B", "FI-SI"), ("C", "FI-AE"))
+    try:
+        await a.send_json_to({"event": "start_game", "payload": {}})
+        await recv_until(a, "lobby_update", lambda p: p["status"] == "running")
+        set_button_task(env, "cov_pi_wrong")
+
+        await b.send_json_to({"event": "player_input", "payload": {
+            "action_type": "button_press", "target": "nope", "value": "nope"
+        }})
+        res = await recv_until(b, "input_result")
+        assert res["payload"]["result"] == "wrong"
+        await recv_until(b, "game_tick", lambda p: p["health"] <= 240)
+    finally:
+        await beenden(a, b, c, game_ids=["cov_pi_wrong"])
+
+
+@pytest.mark.asyncio
+async def test_player_input_correct(env):
+    (a, b, c) = await spieler("cov_pi_correct",
+                              ("A", "MASTER"), ("B", "FI-SI"), ("C", "FI-AE"))
+    try:
+        await a.send_json_to({"event": "start_game", "payload": {}})
+        await recv_until(a, "lobby_update", lambda p: p["status"] == "running")
+        set_button_task(env, "cov_pi_correct")
+        env.hset(state_key("cov_pi_correct"), "health", 100)
+
+        await b.send_json_to({"event": "player_input", "payload": {
+            "action_type": "button_press", "target": "reactor_vent", "value": "open"
+        }})
+        res = await recv_until(b, "input_result")
+        assert res["payload"]["result"] == "correct"
+    finally:
+        await beenden(a, b, c, game_ids=["cov_pi_correct"])
+
+
+@pytest.mark.asyncio
+async def test_player_input_ignored(env):
+    """input_result 'ignored' wenn Rolle nicht passt."""
+    (a, b, c) = await spieler("cov_pi_ignored",
+                              ("A", "MASTER"), ("B", "FI-SI"), ("C", "FI-AE"))
+    try:
+        await a.send_json_to({"event": "start_game", "payload": {}})
+        await recv_until(a, "lobby_update", lambda p: p["status"] == "running")
+
+        # AlarmTask: P2 versucht main_switch (nur P1 erlaubt)
+        st = AlarmTask.create({})
+        env.hset(state_key("cov_pi_ignored"), "task", json.dumps({
+            "task_id": "t-x", "kind": "alarm", "instruction": "x",
+            "assigned_to_player": None, "state": st,
+        }))
+
+        await c.send_json_to({"event": "player_input", "payload": {
+            "action_type": "button_press", "target": "main_switch", "value": st["broken_symbol"]
+        }})
+        res = await recv_until(c, "input_result")
+        assert res["payload"]["result"] == "ignored"
+    finally:
+        await beenden(a, b, c, game_ids=["cov_pi_ignored"])
+
+
+@pytest.mark.asyncio
+async def test_player_input_error_from_datacenter(env):
+    """input_result error wenn Payload ungültig."""
+    (a, b, c) = await spieler("cov_pi_derr",
+                              ("A", "MASTER"), ("B", "FI-SI"), ("C", "FI-AE"))
+    try:
+        await a.send_json_to({"event": "start_game", "payload": {}})
+        await recv_until(a, "lobby_update", lambda p: p["status"] == "running")
+
+        await b.send_json_to({"event": "player_input", "payload": {
+            "action_type": "unknown_action", "target": "x", "value": "y"
+        }})
+        res = await recv_until(b, "input_result")
+        assert res["payload"]["result"] == "error"
+        await recv_until(b, "error")
+    finally:
+        await beenden(a, b, c, game_ids=["cov_pi_derr"])
+
+
+# ---------------------------------------------------------------- _tasks_for_me (219-226)
+@pytest.mark.asyncio
+async def test_tasks_for_me_filters_views(env):
+    """Cover-Zeile 219-226: tasks_for_me liefert 'view' je Rolle, kein 'views'."""
+    (a, b, c) = await spieler("cov_tfm",
+                              ("A", "MASTER"), ("B", "FI-SI"), ("C", "FI-AE"))
+    try:
+        await a.send_json_to({"event": "start_game", "payload": {}})
+        await recv_until(a, "lobby_update", lambda p: p["status"] == "running")
+
+        st = AlarmTask.create({})
+        env.hset(state_key("cov_tfm"), "task", json.dumps({
+            "task_id": "t-alarm", "kind": "alarm", "instruction": "x",
+            "assigned_to_player": None, "state": st,
+        }))
+
+        def ist(p):
+            return p["tasks"] and p["tasks"][0]["task_id"] == "t-alarm"
+
+        tick_a = await recv_until(a, "game_tick", ist)
+        tick_b = await recv_until(b, "game_tick", ist)
+        tick_c = await recv_until(c, "game_tick", ist)
+
+        task_a = tick_a["payload"]["tasks"][0]
+        task_b = tick_b["payload"]["tasks"][0]
+        task_c = tick_c["payload"]["tasks"][0]
+
+        assert "views" not in task_a and "state" not in task_a
+        assert task_a["view"]["type"] == "alarm_source"
+        assert task_b["view"]["type"] == "main_switches"
+        assert task_c["view"]["type"] == "shutdown_terminal"
+    finally:
+        await beenden(a, b, c, game_ids=["cov_tfm"])
+
+
+# ---------------------------------------------------------------- broadcast-Methoden (238-243)
+@pytest.mark.asyncio
+async def test_broadcast_lobby_update(env):
+    """Cover-Zeile 238-240: lobby_update handler im Consumer."""
+    a = await verbinden_ohne_initial("cov_bcast_lobby")
+    b = await verbinden_ohne_initial("cov_bcast_lobby")
+
+    # Wenn b joined, soll a das lobby_update bekommen (Broadcast)
+    await registrieren(a, "A")
+    await recv_until(a, "lobby_update")
+    await registrieren(b, "B")
+    await recv_until(a, "lobby_update", lambda p: len(p["players"]) == 2)
+
+    await a.disconnect()
+    await b.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_broadcast_game_over(env):
+    """Cover-Zeile 243: game_over handler im Consumer."""
+    (a, b, c) = await spieler("cov_bcast_over",
+                              ("A", "MASTER"), ("B", "FI-SI"), ("C", "FI-AE"))
+    try:
+        await a.send_json_to({"event": "start_game", "payload": {}})
+        await recv_until(a, "lobby_update", lambda p: p["status"] == "running")
+        env.hset(state_key("cov_bcast_over"), "health", 1)
+
+        for comm in (a, b, c):
+            over = await recv_until(comm, "game_over", timeout=5)
+            assert over["payload"]["result"] == "meltdown"
+            assert "score" in over["payload"]
+    finally:
+        await beenden(a, b, c, game_ids=["cov_bcast_over"])

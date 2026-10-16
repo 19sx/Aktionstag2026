@@ -1,0 +1,35 @@
+{
+    "info": {
+      "name": "DRV-Box Backend (HTTP)",
+      "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+      {
+        "name": "1 Create Game",
+        "event": [{
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status 200\", () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "pm.collectionVariables.set(\"game_id\", j.game_id);"
+            ]
+          }
+        }],
+        "request": {
+          "method": "GET",
+          "header": [],
+          "url": {
+            "raw": "{{baseUrl}}/create-game/",
+            "host": ["{{baseUrl}}"],
+            "path": ["create-game", ""]
+          }
+        }
+      }
+    ],
+    "variable": [
+      { "key": "baseUrl", "value": "http://localhost:8000" },
+      { "key": "game_id", "value": "" }
+    ]
+  }

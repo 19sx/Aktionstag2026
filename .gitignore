@@ -1,0 +1,118 @@
+
+# Betriebssystem & Office (Windows, macOS, Linux)
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+[Dd]esktop.ini
+
+# Office-Temporärdateien (z. B. geöffnete Excel-Dateien)
+~$*.xlsx
+~$*.xls
+~$*.docx
+~$*.pptx
+
+
+# IDEs & Editoren
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.sublime-workspace
+*.sublime-project
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*~
+
+
+# Python & Django Backend
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtuelle Umgebungen
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Django-spezifisch
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+db.sqlite3-*
+media/
+staticfiles/
+
+# Test- & Coverage-Artefakte (Pytest)
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Node.js
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Vite / Build Outputs
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# Editor directories and files
+.vscode/*
+.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ==========================================
+# Umgebungsvariablen & Secrets
+# ==========================================
+.env
+.env.*
+!.env.example
+*.pid

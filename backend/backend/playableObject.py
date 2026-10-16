@@ -1,0 +1,338 @@
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from enum import Enum
+import random
+
+ROLE_M = "MASTER"
+ROLE_P1 = "FI-SI"
+ROLE_P2 = "FI-AE"
+
+FIRE_SEQUENCE_LEN = 3
+
+
+class Outcome(str, Enum):
+    IGNORED = "ignored"
+    PROGRESS = "progress"
+    SOLVED = "solved"
+    WRONG = "wrong"
+
+
+@dataclass
+class StepResult:
+    outcome: Outcome
+    state: dict
+
+
+class PlayableObject(ABC):
+    kind: str
+    instruction: str
+
+    @classmethod
+    @abstractmethod
+    def create(cls, players: dict) -> dict:
+        pass
+
+    @classmethod
+    @abstractmethod
+    def views(cls, state: dict) -> dict:
+        pass
+
+    @classmethod
+    @abstractmethod
+    def handle_input(cls, state: dict, player_name: str, role: str | None,
+                     data, now: float) -> StepResult:
+        pass
+
+
+# --------------------------------------------------------------------------- Button
+class ButtonTask(PlayableObject):
+    kind = "button"
+    instruction = "Drücke den richtigen Knopf!"
+
+    BUTTONS = [
+        {"target": "reactor_vent", "value": "open", "instruction": "Öffne das Reaktor-Ventil!"},
+        {"target": "main_cooling", "value": "on",   "instruction": "Aktiviere die Hauptkühlung!"},
+        {"target": "backup_power", "value": "off",  "instruction": "Schalte die Notstromversorgung aus!"},
+    ]
+
+    @classmethod
+    def create(cls, players):
+        button = random.choice(cls.BUTTONS)
+        names = list(players.keys())
+        return {
+            **button,
+            "assigned_to_player": random.choice(names) if names else None,
+        }
+
+    @classmethod
+    def views(cls, state):
+        return {}
+
+    @classmethod
+    def handle_input(cls, state, player_name, role, data, now):
+        if data.target == state["target"] and str(data.value) == state["value"]:
+            return StepResult(Outcome.SOLVED, state)
+        return StepResult(Outcome.WRONG, state)
+
+
+# --------------------------------------------------------------------------- Alarm
+class AlarmTask(PlayableObject):
+    kind = "alarm"
+    instruction = "Alarm verifizieren!"
+
+    COMPONENTS = [
+        {"id": "K1", "label": "NETZWERK-SWITCH 2", "symbol": "raute"},
+        {"id": "K2", "label": "HAUPT-STROM B-04", "symbol": "dreieck"},
+        {"id": "K3", "label": "LÜFTUNG SYSTEM A", "symbol": "quadrat"},
+        {"id": "K4", "label": "FIREWALL-MODUL", "symbol": "kreis"},
+    ]
+
+    # Pool für den Freigabe-Code. Wird bei jedem Task neu gemischt.
+    CODE_POOL = ['dreieck-runter', 'kreuz', 'dreieck-runter-voll', 'stern']
+
+    @classmethod
+    def create(cls, players):
+        broken = random.choice(cls.COMPONENTS)
+        # Code-Reihenfolge wird jedes Mal neu gemischt
+        code = list(cls.CODE_POOL)
+        random.shuffle(code)
+        return {
+            "broken_id": broken["id"],
+            "broken_symbol": broken["symbol"],
+            "code": code,
+            "switch_ok": False,
+            "cmd_ok": False,
+        }
+
+    @classmethod
+    def views(cls, state):
+        return {
+            ROLE_M: {
+                "type": "alarm_source",
+                "component": state["broken_id"],
+                "symbol": state["broken_symbol"],
+                "code": state["code"],
+            },
+            ROLE_P1: {
+                "type": "main_switches",
+                "switches": [c["symbol"] for c in cls.COMPONENTS],
+                "p1_done": state["switch_ok"],
+            },
+            ROLE_P2: {
+                "type": "shutdown_terminal",
+                "code_length": len(state["code"]),
+                "p2_done": state["cmd_ok"],
+            },
+        }
+
+    @classmethod
+    def handle_input(cls, state, player_name, role, data, now):
+        value = str(data.value).strip().lower()
+
+        if data.target == "main_switch" and role == ROLE_P1:
+            if value not in (state["broken_symbol"].lower(), state["broken_id"].lower()):
+                return StepResult(Outcome.WRONG, state)
+            state["switch_ok"] = True
+
+        elif data.target == "shutdown_cmd" and role == ROLE_P2:
+            expected = ",".join(state["code"]).lower()
+            if value.replace(" ", "") != expected:
+                return StepResult(Outcome.WRONG, state)
+            state["cmd_ok"] = True
+        else:
+            return StepResult(Outcome.IGNORED, state)
+
+        if state["switch_ok"] and state["cmd_ok"]:
+            return StepResult(Outcome.SOLVED, state)
+        return StepResult(Outcome.PROGRESS, state)
+
+
+# --------------------------------------------------------------------------- FireProtocol
+class FireProtocolTask(PlayableObject):
+    kind = "fire_protocol"
+    instruction = "Löschprotokoll ausführen!"
+
+    VALVES = ["V-31", "V-32", "V-33"]
+    COLORS = ["ORANGE", "RED", "GREEN"]
+    FRAGMENT_POOL = ["DRV", "AK26", "SYS", "BOX", "SEC", "FIRE"]
+
+    @classmethod
+    def create(cls, players):
+        sequence = [
+            {"valve": random.choice(cls.VALVES), "color": random.choice(cls.COLORS)}
+            for _ in range(FIRE_SEQUENCE_LEN)
+        ]
+
+        picked = random.sample(cls.FRAGMENT_POOL, 3)
+        p2_frags = picked[:2]
+        last_frag = picked[2]
+
+        order = [0, 1, 2]
+        random.shuffle(order)
+
+        return {
+            "sequence": sequence,
+            "step": 0,
+            "fragments": p2_frags,
+            "last_fragment": last_frag,
+            "order": order,
+            "p1_done": False,
+            "p2_done": False,
+        }
+
+    @classmethod
+    def views(cls, state):
+        frags = state["fragments"]
+        last = state["last_fragment"]
+        order = state["order"]
+        all_frags = frags + [last]
+        ordered = [all_frags[i] for i in order]
+
+        return {
+            ROLE_M: {
+                "type": "fire_protocol",
+                "sequence": state["sequence"],
+                "step": state["step"],
+                "sequence_len": len(state["sequence"]),
+                "fragments": frags,
+                "last_fragment": last,
+                "order": order,
+                "password_preview": "-".join(ordered),
+            },
+            ROLE_P1: {
+                "type": "valve_panel",
+                "valves": cls.VALVES,
+                "colors": cls.COLORS,
+                "sequence_len": len(state["sequence"]),
+                "step": state["step"],
+                "last_fragment": state["last_fragment"] if state["p1_done"] else None,
+                "p1_done": state["p1_done"],
+            },
+            ROLE_P2: {
+                "type": "password_input",
+                "fragments": frags,
+                "last_fragment": state["last_fragment"] if state["p1_done"] else None,
+                "p2_done": state["p2_done"],
+            },
+        }
+
+    @classmethod
+    def handle_input(cls, state, player_name, role, data, now):
+        value = str(data.value).strip().upper()
+
+        if data.target == "valve_action" and role == ROLE_P1:
+            if state["p1_done"]:
+                return StepResult(Outcome.IGNORED, state)
+            step = state["step"]
+            if step >= len(state["sequence"]):
+                return StepResult(Outcome.IGNORED, state)
+
+            if ":" not in value:
+                return StepResult(Outcome.WRONG, state)
+            valve_in, color_in = value.split(":", 1)
+            valve_map = {"ALPHA": "V-31", "BETA": "V-32", "GAMMA": "V-33"}
+            valve_norm = valve_map.get(valve_in, valve_in)
+
+            current = state["sequence"][step]
+            if valve_norm != current["valve"].upper() or color_in != current["color"].upper():
+                return StepResult(Outcome.WRONG, state)
+
+            state["step"] = step + 1
+            if state["step"] >= len(state["sequence"]):
+                state["p1_done"] = True
+            return StepResult(Outcome.PROGRESS, state)
+
+        if data.target == "release_pw" and role == ROLE_P2:
+            if not state["p1_done"]:
+                return StepResult(Outcome.IGNORED, state)
+
+            all_frags = state["fragments"] + [state["last_fragment"]]
+            ordered = [all_frags[i] for i in state["order"]]
+            expected = "".join(ordered).upper()
+
+            clean_in = value.replace("-", "").replace(" ", "").upper()
+            if clean_in != expected:
+                return StepResult(Outcome.WRONG, state)
+
+            state["p2_done"] = True
+            return StepResult(Outcome.SOLVED, state)
+
+        return StepResult(Outcome.IGNORED, state)
+
+
+# --------------------------------------------------------------------------- DataRescue
+class DataRescueTask(PlayableObject):
+    kind = "data_rescue"
+    instruction = "Daten retten!"
+
+    WORDS = ["SERVER", "BACKUP", "DATEN", "RETTEN", "SICHERN", "CLOUD"]
+    # Binärwerte-Pool: Buchstaben A-Z (65..90)
+    LETTER_CODES = list(range(65, 91))
+
+    @classmethod
+    def create(cls, players):
+        word = random.choice(cls.WORDS)
+        p1_codes = [ord(c) for c in word]
+
+        # Zwei unterschiedliche Buchstaben-Codes (A-Z) zufällig ziehen
+        p2_values = random.sample(cls.LETTER_CODES, 2)
+        p2_binary = [format(v, "08b") for v in p2_values]
+
+        return {
+            "p1_word": word,
+            "p1_codes": p1_codes,
+            "p2_values": p2_values,
+            "p2_binary": p2_binary,
+            "p1_unlocked": False,
+            "p2_unlocked": False,
+        }
+
+    @classmethod
+    def views(cls, state):
+        return {
+            ROLE_M: {
+                "type": "task3_master",
+                "p1_status": "FREIGESCHALTET" if state["p1_unlocked"] else "GESPERRT",
+                "p2_status": "FREIGESCHALTET" if state["p2_unlocked"] else "GESPERRT",
+            },
+            ROLE_P1: {
+                "type": "task3_p1",
+                "ascii_codes": state["p1_codes"],
+                "button_unlocked": state["p1_unlocked"],
+            },
+            ROLE_P2: {
+                "type": "task3_p2",
+                "binary_codes": state["p2_binary"],
+                "button_unlocked": state["p2_unlocked"],
+            },
+        }
+
+    @classmethod
+    def handle_input(cls, state, player_name, role, data, now):
+        value = str(data.value).strip().upper()
+
+        if data.target == "ascii_answer" and role == ROLE_P1:
+            if value != state["p1_word"]:
+                return StepResult(Outcome.WRONG, state)
+            state["p1_unlocked"] = True
+            if state["p2_unlocked"]:
+                return StepResult(Outcome.SOLVED, state)
+            return StepResult(Outcome.PROGRESS, state)
+
+        if data.target == "binary_answer" and role == ROLE_P2:
+            versuch = " ".join(value.split())
+            ziel = " ".join(str(v) for v in state["p2_values"])
+            if versuch != ziel:
+                return StepResult(Outcome.WRONG, state)
+            state["p2_unlocked"] = True
+            if state["p1_unlocked"]:
+                return StepResult(Outcome.SOLVED, state)
+            return StepResult(Outcome.PROGRESS, state)
+
+        return StepResult(Outcome.IGNORED, state)
+
+
+TASK_TYPES = {
+    cls.kind: cls
+    for cls in (ButtonTask, AlarmTask, FireProtocolTask, DataRescueTask)
+}
